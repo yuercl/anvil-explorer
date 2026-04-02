@@ -170,10 +170,17 @@ export function CopyButton(props: { value: string; label: string }) {
 }
 
 export function AppShell(props: { children: ComponentChildren }) {
-  const { actions, chainMeta, error, rpcUrl, setRpcUrl, startBlock, setStartBlock, stats, status, statusMessage } = useExplorer()
+  const {
+    activeEndpointId,
+    chainMeta,
+    endpoints,
+    error,
+    setActiveEndpointId,
+    stats,
+    status,
+    statusMessage,
+  } = useExplorer()
   const [pathname, setPathname] = useState(() => window.location.pathname)
-  const [rpcDraft, setRpcDraft] = useState(rpcUrl)
-  const [startBlockDraft, setStartBlockDraft] = useState(startBlock !== null ? String(startBlock) : '')
   const [searchValue, setSearchValue] = useState('')
   const [searchError, setSearchError] = useState<string | null>(null)
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => getStoredThemePreference())
@@ -181,10 +188,6 @@ export function AppShell(props: { children: ComponentChildren }) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
     () => window.localStorage.getItem('sidebar-collapsed') === '1',
   )
-
-  useEffect(() => {
-    setRpcDraft(rpcUrl)
-  }, [rpcUrl])
 
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, themePreference)
@@ -207,6 +210,15 @@ export function AppShell(props: { children: ComponentChildren }) {
 
   function isActive(path: string) {
     return path === '/' ? pathname === '/' : pathname === path || pathname.startsWith(`${path}/`)
+  }
+
+  async function handleEndpointSwitch(event: Event) {
+    const nextEndpointId = (event.currentTarget as HTMLSelectElement).value
+    if (!nextEndpointId || nextEndpointId === activeEndpointId) {
+      return
+    }
+
+    await setActiveEndpointId(nextEndpointId)
   }
 
   async function handleSearchSubmit(event: Event) {
@@ -234,27 +246,6 @@ export function AppShell(props: { children: ComponentChildren }) {
 
     route(`/address/${target.address}`)
     notifyLocationChange()
-  }
-
-  function handleRpcSubmit(event: Event) {
-    event.preventDefault()
-    setRpcUrl(rpcDraft.trim())
-    actions.reconnect()
-  }
-
-  function handleStartBlockSubmit(event: Event) {
-    event.preventDefault()
-    const trimmed = startBlockDraft.trim()
-    if (trimmed === '') {
-      setStartBlock(null)
-      actions.resetData()
-      return
-    }
-    const parsed = Number.parseInt(trimmed, 10)
-    if (Number.isFinite(parsed) && parsed >= 0) {
-      setStartBlock(parsed)
-      actions.resetData()
-    }
   }
 
   const navItems: Array<{
@@ -305,6 +296,19 @@ export function AppShell(props: { children: ComponentChildren }) {
             <div class="sidebar-status-header">
               <p class="eyebrow">Status</p>
               <div class="sidebar-status-actions">
+                <label class="chain-switch">
+                  <span class="chain-switch-label">Chain</span>
+                  <span class="chain-switch-field">
+                    <select value={activeEndpointId} onChange={handleEndpointSwitch} aria-label="Switch chain endpoint">
+                      {endpoints.map((endpoint) => (
+                        <option value={endpoint.id}>{endpoint.name}</option>
+                      ))}
+                    </select>
+                    <svg class="chain-switch-icon" aria-hidden="true" viewBox="0 0 16 16">
+                      <path d="m4.5 6.5 3.5 3 3.5-3" />
+                    </svg>
+                  </span>
+                </label>
                 <div class="status-cluster">
                   {live && (
                     <span class="live-badge">
@@ -393,33 +397,6 @@ export function AppShell(props: { children: ComponentChildren }) {
           ))}
         </nav>
 
-        <section class="sidebar-card sidebar-summary">
-          <p class="eyebrow">Endpoint</p>
-          <form class="sidebar-endpoint-form" onSubmit={handleRpcSubmit}>
-            <label>
-              <span class="field-label">RPC URL</span>
-              <input
-                value={rpcDraft}
-                onInput={(event) => setRpcDraft(event.currentTarget.value)}
-                placeholder="http://127.0.0.1:8545"
-              />
-            </label>
-            <button type="submit">Reconnect</button>
-          </form>
-          <form class="sidebar-endpoint-form" onSubmit={handleStartBlockSubmit}>
-            <label>
-              <span class="field-label">Start Block</span>
-              <input
-                value={startBlockDraft}
-                onInput={(event) => setStartBlockDraft(event.currentTarget.value)}
-                placeholder={chainMeta?.forkConfig ? String(chainMeta.forkConfig.forkBlockNumber) : '0'}
-                type="number"
-                min="0"
-              />
-            </label>
-            <button type="submit">Apply</button>
-          </form>
-        </section>
       </aside>
 
       <div class="app-main">

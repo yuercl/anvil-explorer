@@ -1009,6 +1009,17 @@ export async function resetExplorerData() {
     db.clear('transactions'),
     db.clear('receipts'),
     db.clear('logs'),
+    db.clear('meta'),
+  ])
+}
+
+export async function resetExplorerDataIncludingAbis() {
+  const db = await getDb()
+  await Promise.all([
+    db.clear('blocks'),
+    db.clear('transactions'),
+    db.clear('receipts'),
+    db.clear('logs'),
     db.clear('abis'),
     db.clear('labels'),
     db.clear('meta'),

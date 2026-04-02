@@ -153,6 +153,13 @@ export type ChainMeta = {
   forkConfig?: ForkConfig | null
 }
 
+export type ExplorerEndpoint = {
+  id: string
+  name: string
+  rpcUrl: string
+  startBlock: number | null
+}
+
 export type ExplorerStats = {
   blockCount: number
   transactionCount: number
