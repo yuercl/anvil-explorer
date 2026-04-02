@@ -42,9 +42,7 @@ function normalizeUploadedAbiPayload(payload: unknown) {
 
 export async function fetchUploadedAbis(endpoint: string) {
   const response = await fetch(endpoint, {
-    headers: {
-      'cache-control': 'no-store',
-    },
+    'cache': 'no-store',
   })
 
   if (!response.ok) {
