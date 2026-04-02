@@ -4,9 +4,11 @@ import { useContext } from 'preact/hooks'
 import { useEffect, useState } from 'preact/hooks'
 import { DEFAULT_ABI_API_URL, syncUploadedAbis } from '../lib/abi-api.ts'
 import {
+  getChainMeta,
   getExplorerStats,
   resetExplorerData,
   resetExplorerDataIncludingAbis,
+  setActiveChainScope,
 } from '../lib/db.ts'
 import { createLogger } from '../lib/logger.ts'
 import {
@@ -86,6 +88,10 @@ function createDefaultEndpoint(): ExplorerEndpoint {
     rpcUrl: DEFAULT_URL,
     startBlock: null,
   }
+}
+
+function createEndpointScopeKey(endpoint: ExplorerEndpoint) {
+  return `${endpoint.id}::${endpoint.rpcUrl.trim().toLowerCase()}`
 }
 
 function readInitialEndpoints() {
@@ -207,6 +213,9 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
   const activeEndpoint = endpoints.find((endpoint) => endpoint.id === activeEndpointId) ?? endpoints[0] ?? createDefaultEndpoint()
   const rpcUrl = activeEndpoint.rpcUrl
   const startBlock = activeEndpoint.startBlock
+  const activeScopeKey = createEndpointScopeKey(activeEndpoint)
+
+  setActiveChainScope(activeScopeKey)
 
   useEffect(() => {
     window.localStorage.setItem(ENDPOINTS_STORAGE_KEY, JSON.stringify(endpoints))
@@ -230,10 +239,8 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
     window.localStorage.setItem(ABI_API_STORAGE_KEY, abiApiUrl)
   }, [abiApiUrl])
 
-  async function resetConnectionState() {
-    await resetExplorerData()
+  function resetConnectionState() {
     setSnapshots([])
-    setRefreshKey((current) => current + 1)
     setChainMeta(null)
     setStats(EMPTY_STATS)
     setError(null)
@@ -246,7 +253,8 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
       return
     }
 
-    await resetConnectionState()
+    resetConnectionState()
+    setRefreshKey((current) => current + 1)
     setActiveEndpointIdState(nextEndpointId)
     setConnectionVersion((current) => current + 1)
   }
@@ -295,7 +303,25 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
       }
     }
 
+    async function loadCachedState() {
+      const [cachedChainMeta, cachedStats] = await Promise.all([getChainMeta(), getExplorerStats()])
+
+      if (cancelled) {
+        return
+      }
+
+      setChainMeta(cachedChainMeta ?? null)
+      setStats(cachedStats)
+
+      if (cachedChainMeta) {
+        setStatus('syncing')
+        setStatusMessage(`Loaded cached chain at block ${cachedChainMeta.latestIndexedBlock}`)
+      }
+    }
+
     async function run() {
+      await loadCachedState()
+
       while (!cancelled) {
         try {
           setError(null)
@@ -344,7 +370,7 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
     return () => {
       cancelled = true
     }
-  }, [rpcUrl, startBlock, connectionVersion])
+  }, [activeScopeKey, rpcUrl, startBlock, connectionVersion])
 
   useEffect(() => {
     let cancelled = false
@@ -480,7 +506,9 @@ export function ExplorerProvider(props: { children: ComponentChildren }) {
         setRefreshKey((current) => current + 1)
       },
       async resetChainData() {
-        await resetConnectionState()
+        await resetExplorerData()
+        resetConnectionState()
+        setRefreshKey((current) => current + 1)
         setConnectionVersion((current) => current + 1)
       },
       async resetData() {

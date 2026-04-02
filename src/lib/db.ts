@@ -16,8 +16,10 @@ import type {
   TransactionRecord,
 } from './types.ts'
 
-const DB_NAME = 'anvil-explorer'
+const LEGACY_DB_NAME = 'anvil-explorer'
+const DB_NAME_PREFIX = 'anvil-explorer::'
 const DB_VERSION = 2
+const KNOWN_SCOPES_STORAGE_KEY = 'anvil-explorer.known-db-scopes'
 const ERC20_TRANSFER_TOPIC =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
@@ -72,7 +74,8 @@ interface ExplorerDbSchema extends DBSchema {
   }
 }
 
-let dbPromise: Promise<IDBPDatabase<ExplorerDbSchema>> | undefined
+let activeScopeKey = 'default'
+const dbPromises = new Map<string, Promise<IDBPDatabase<ExplorerDbSchema>>>()
 
 async function collectFromCursor<T>(request: Promise<any>, limit: number) {
   const values: T[] = []
@@ -86,9 +89,56 @@ async function collectFromCursor<T>(request: Promise<any>, limit: number) {
   return values
 }
 
+function getDbName(scopeKey: string) {
+  return `${DB_NAME_PREFIX}${scopeKey}`
+}
+
+function getKnownScopes() {
+  try {
+    const stored = window.localStorage.getItem(KNOWN_SCOPES_STORAGE_KEY)
+
+    if (!stored) {
+      return []
+    }
+
+    const parsed = JSON.parse(stored)
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === 'string' && value.length > 0)
+      : []
+  } catch {
+    return []
+  }
+}
+
+function rememberScope(scopeKey: string) {
+  const nextScopes = new Set(getKnownScopes())
+  nextScopes.add(scopeKey)
+  window.localStorage.setItem(KNOWN_SCOPES_STORAGE_KEY, JSON.stringify([...nextScopes]))
+}
+
+async function deleteDatabaseByName(name: string) {
+  await new Promise<void>((resolve, reject) => {
+    const request = window.indexedDB.deleteDatabase(name)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+    request.onblocked = () => resolve()
+  })
+}
+
+export function setActiveChainScope(scopeKey: string) {
+  activeScopeKey = scopeKey
+  rememberScope(scopeKey)
+}
+
 export async function getDb() {
-  if (!dbPromise) {
-    dbPromise = openDB<ExplorerDbSchema>(DB_NAME, DB_VERSION, {
+  const dbName = getDbName(activeScopeKey)
+  const existing = dbPromises.get(dbName)
+
+  if (existing) {
+    return existing
+  }
+
+  const promise = openDB<ExplorerDbSchema>(dbName, DB_VERSION, {
       upgrade(db) {
         if (!db.objectStoreNames.contains('blocks')) {
           const blocks = db.createObjectStore('blocks', { keyPath: 'number' })
@@ -133,9 +183,8 @@ export async function getDb() {
         }
       },
     })
-  }
-
-  return dbPromise
+  dbPromises.set(dbName, promise)
+  return promise
 }
 
 export async function putMeta(key: string, value: unknown) {
@@ -1014,14 +1063,17 @@ export async function resetExplorerData() {
 }
 
 export async function resetExplorerDataIncludingAbis() {
-  const db = await getDb()
-  await Promise.all([
-    db.clear('blocks'),
-    db.clear('transactions'),
-    db.clear('receipts'),
-    db.clear('logs'),
-    db.clear('abis'),
-    db.clear('labels'),
-    db.clear('meta'),
-  ])
+  const knownDbNames = [...new Set([LEGACY_DB_NAME, ...getKnownScopes().map(getDbName)])]
+
+  const openDbs = await Promise.allSettled([...dbPromises.values()])
+  for (const result of openDbs) {
+    if (result.status === 'fulfilled') {
+      result.value.close()
+    }
+  }
+
+  dbPromises.clear()
+  window.localStorage.removeItem(KNOWN_SCOPES_STORAGE_KEY)
+
+  await Promise.all(knownDbNames.map(deleteDatabaseByName))
 }
