@@ -1,8 +1,9 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
-import { decodeLog, decodeTransaction, toAbiRecord } from '../lib/decode.ts'
+import { decodeLogWithAbis, decodeTransactionWithAbis, mergeAbis, toAbiRecord } from '../lib/decode.ts'
 import {
   getAbi,
+  listAbis,
   getLogsByTxHash,
   getReceipt,
   getResolvedAddressLabel,
@@ -323,14 +324,15 @@ export function TxPage(props: RouteProps) {
       const client = createAnvilClient(rpcUrl)
       const summary = await buildTransactionSummary(transaction)
 
-      const [toAbi, createdAbi, fromKind, toKind] = await Promise.all([
+      const [toAbi, createdAbi, allAbis, fromKind, toKind] = await Promise.all([
         transaction.to ? getAbi(transaction.to) : Promise.resolve(undefined),
         receipt?.contractAddress ? getAbi(receipt.contractAddress) : Promise.resolve(undefined),
+        listAbis(),
         getAddressKind(client, transaction.from),
         transaction.to ? getAddressKind(client, transaction.to) : Promise.resolve(null),
       ])
 
-      const contractAbi = toAbi?.abi ?? createdAbi?.abi ?? null
+      const contractAbi = mergeAbis([toAbi?.abi, createdAbi?.abi, ...allAbis.map((record) => record.abi)])
       const failure =
         receipt?.status === '0' ? await inspectTransactionFailure(client, transaction, contractAbi) : null
       const tokenEffects = await buildTokenBalanceEffects(client, logs, transaction.blockNumber)
@@ -386,7 +388,7 @@ export function TxPage(props: RouteProps) {
 
   const decodedCall =
     resource.data?.transaction && resource.data.contractAbi
-      ? decodeTransaction(resource.data.transaction, resource.data.contractAbi)
+      ? decodeTransactionWithAbis(resource.data.transaction, [resource.data.contractAbi])
       : null
   const tokenGroups = resource.data ? groupTokenEffectsByToken(resource.data.tokenEffects) : []
   const activeTokenGroup =
@@ -707,7 +709,7 @@ export function TxPage(props: RouteProps) {
                     >
                       {resource.data.logs.map((log) => {
                         const decoded = resource.data?.contractAbi
-                          ? decodeLog(log, resource.data.contractAbi)
+                          ? decodeLogWithAbis(log, [resource.data.contractAbi])
                           : null
                         const topicsText = log.topics.length > 0 ? log.topics.join('\n') : 'n/a'
 

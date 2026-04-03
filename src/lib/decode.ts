@@ -4,6 +4,8 @@ import {
   getAbiItem,
   getAddress,
   isAddress,
+  toFunctionSelector,
+  type AbiFunction,
   type Abi,
   type Hex,
 } from 'viem'
@@ -32,6 +34,33 @@ function stringifyDecodedValue(value: unknown): string {
 function makeSignature(name: string, args: Array<{ name: string }>) {
   const labels = args.map((arg) => arg.name || '?').join(', ')
   return `${name}(${labels})`
+}
+
+function toAbiItemKey(item: Abi[number]) {
+  return JSON.stringify(item)
+}
+
+function toUniqueAbi(abis: Array<Abi | null | undefined>) {
+  const merged: Abi[number][] = []
+  const seen = new Set<string>()
+
+  for (const abi of abis) {
+    if (!abi) {
+      continue
+    }
+
+    for (const item of abi) {
+      const key = toAbiItemKey(item)
+      if (seen.has(key)) {
+        continue
+      }
+
+      seen.add(key)
+      merged.push(item)
+    }
+  }
+
+  return merged as Abi
 }
 
 export function parseAbiInput(source: string): Abi {
@@ -98,6 +127,13 @@ export function decodeTransaction(transaction: TransactionRecord, abi: Abi | nul
   }
 }
 
+export function decodeTransactionWithAbis(
+  transaction: TransactionRecord,
+  abis: Array<Abi | null | undefined>,
+): DecodedFunctionCall | null {
+  return decodeTransaction(transaction, toUniqueAbi(abis))
+}
+
 export function decodeLog(log: LogRecord, abi: Abi | null | undefined): DecodedEvent | null {
   if (!abi || !log.topic0 || !log.txHash) {
     return null
@@ -153,4 +189,57 @@ export function decodeLog(log: LogRecord, abi: Abi | null | undefined): DecodedE
   } catch {
     return null
   }
+}
+
+export function decodeLogWithAbis(log: LogRecord, abis: Array<Abi | null | undefined>): DecodedEvent | null {
+  return decodeLog(log, toUniqueAbi(abis))
+}
+
+export function getMatchingFunctionAbi(
+  abis: Array<Abi | null | undefined>,
+  selectors: Iterable<string | null | undefined>,
+): Abi {
+  const normalizedSelectors = new Set(
+    [...selectors]
+      .filter((selector): selector is string => typeof selector === 'string' && selector.length > 0)
+      .map((selector) => selector.toLowerCase()),
+  )
+
+  if (normalizedSelectors.size === 0) {
+    return []
+  }
+
+  const matchedFunctions: AbiFunction[] = []
+  const seen = new Set<string>()
+
+  for (const abi of abis) {
+    if (!abi) {
+      continue
+    }
+
+    for (const item of abi) {
+      if (item.type !== 'function') {
+        continue
+      }
+
+      const selector = toFunctionSelector(item).toLowerCase()
+      if (!normalizedSelectors.has(selector)) {
+        continue
+      }
+
+      const key = toAbiItemKey(item)
+      if (seen.has(key)) {
+        continue
+      }
+
+      seen.add(key)
+      matchedFunctions.push(item)
+    }
+  }
+
+  return matchedFunctions as Abi
+}
+
+export function mergeAbis(abis: Array<Abi | null | undefined>): Abi {
+  return toUniqueAbi(abis)
 }

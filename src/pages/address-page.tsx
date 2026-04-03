@@ -13,11 +13,12 @@ import {
   getDiscoveredHoldersForErc20Contract,
   getLogsForAddress,
   getTransactionsForAddress,
+  listAbis,
   upsertAbi,
   upsertAddressLabel,
 } from '../lib/db.ts'
 import { getDefaultAddressLabel } from '../lib/address-labels.ts'
-import { decodeLog, toAbiRecord } from '../lib/decode.ts'
+import { decodeLogWithAbis, getMatchingFunctionAbi, mergeAbis, toAbiRecord } from '../lib/decode.ts'
 import { formatEtherString, formatTimestamp, formatUnitsString } from '../lib/format.ts'
 import {
   createAnvilClient,
@@ -205,10 +206,11 @@ export function AddressPage(props: RouteProps) {
 
       const client = createAnvilClient(rpcUrl)
 
-      const [transactions, logs, abi, kind, nativeBalance, discoveredTokens, tokenInfo, discoveredHolders, discoveredContracts, manualLabel, accountInsight] = await Promise.all([
+      const [transactions, logs, abi, allAbis, kind, nativeBalance, discoveredTokens, tokenInfo, discoveredHolders, discoveredContracts, manualLabel, accountInsight] = await Promise.all([
         getTransactionsForAddress(normalizedAddress),
         getLogsForAddress(normalizedAddress),
         getAbi(normalizedAddress),
+        listAbis(),
         getAddressKind(client, normalizedAddress),
         getNativeBalance(client, normalizedAddress),
         getDiscoveredErc20ContractsForAddress(normalizedAddress),
@@ -252,6 +254,7 @@ export function AddressPage(props: RouteProps) {
 
       return {
         abi,
+        allAbis,
         accountInsight,
         contractDiscovery: discoveredContracts.find((item) => item.address === normalizedAddress) ?? null,
         defaultLabel,
@@ -285,7 +288,19 @@ export function AddressPage(props: RouteProps) {
 
   const publicContractFunctions =
     resource.data?.kind === 'contract'
-      ? getPublicContractFunctions(resource.data.abi?.abi, resource.data.transactions, normalizedAddress)
+      ? getPublicContractFunctions(
+          mergeAbis([
+            resource.data.abi?.abi,
+            getMatchingFunctionAbi(
+              resource.data.allAbis.map((record) => record.abi),
+              resource.data.transactions
+                .filter((transaction) => transaction.to?.toLowerCase() === normalizedAddress?.toLowerCase())
+                .map((transaction) => transaction.selector),
+            ),
+          ]),
+          resource.data.transactions,
+          normalizedAddress,
+        )
       : []
   const sortedPublicContractFunctions = [...publicContractFunctions].sort((left, right) => {
     if (publicFunctionSortKey === 'callCount') {
@@ -529,11 +544,11 @@ export function AddressPage(props: RouteProps) {
       return null
     }
 
-    const contractAbi = resource.data.abi?.abi
+    const data = resource.data
 
     return (
       <PageSection title="Logs" description="Most recent indexed logs emitted by this address">
-        {resource.data.logs.length === 0 ? (
+        {data.logs.length === 0 ? (
           <EmptyState title="No logs" body="This address has not emitted any indexed logs yet." />
         ) : (
           <SummaryTable
@@ -545,8 +560,11 @@ export function AddressPage(props: RouteProps) {
               'Data',
             ]}
           >
-            {resource.data.logs.map((log) => {
-              const decoded = contractAbi ? decodeLog(log, contractAbi) : null
+            {data.logs.map((log) => {
+              const decoded = decodeLogWithAbis(log, [
+                data.abi?.abi,
+                ...data.allAbis.map((record) => record.abi),
+              ])
               const topicsText = log.topics.length > 0 ? log.topics.join('\n') : 'n/a'
 
               return (
@@ -709,8 +727,8 @@ export function AddressPage(props: RouteProps) {
                 </PageSection>
               )}
 
-              <PageSection title="Public Functions" description="Callable methods derived from the attached ABI">
-                {resource.data.abi ? (
+              <PageSection title="Public Functions" description="Callable methods derived from the attached ABI and matched selectors">
+                {resource.data.abi || sortedPublicContractFunctions.length > 0 ? (
                   sortedPublicContractFunctions.length > 0 ? (
                     <>
                       <div class="contract-function-toolbar">
@@ -770,7 +788,7 @@ export function AddressPage(props: RouteProps) {
                       )}
                     </>
                   ) : (
-                    <p class="muted">The attached ABI does not expose any callable functions.</p>
+                    <p class="muted">No callable functions could be inferred from the attached ABI or observed selectors.</p>
                   )
                 ) : (
                   <p class="muted">Attach an ABI to list this contract&apos;s publicly callable functions.</p>
